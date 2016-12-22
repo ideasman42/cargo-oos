@@ -1,0 +1,234 @@
+#!/usr/bin/env python
+# Apache License, Version 2.0
+
+import os
+import sys
+
+
+# ----------------
+# Environment Vars
+
+CARGO_BIN = os.environ.get("CARGO_BIN", "cargo")
+VERBOSE = int(os.environ.get("VERBOSE", False)) != 0
+
+# Optionally keep lock file in the build dir
+# in case you don't have it in version control and want a 100% pristine source.
+RELOCATE_FILES = int(os.environ.get("RELOCATE_FILES", False)) != 0
+
+
+# -------------------------
+# Temporary File Relocation
+
+import contextlib
+
+
+class FileTempRelocate(contextlib.ContextDecorator):
+    __slots__ = (
+        # sequence of (src -> dst) pairs
+        "_file_map",
+    )
+
+    def __init__(self, file_map):
+        self._file_map = tuple(file_map)
+
+    def __enter__(self):
+        for src, dst in self._file_map:
+            if os.path.exists(src):
+                dst_dir = os.path.dirname(dst)
+                if not os.path.exists(dst_dir):
+                    os.makedirs(dst_dir)
+                os.rename(src, dst)
+        return self
+
+    def __exit__(self, *exc):
+        for src, dst in self._file_map:
+            if os.path.exists(dst):
+                os.rename(dst, src)
+        return self
+
+
+# ----------------
+# Helper Functions
+
+def is_exe(fpath):
+    return (os.path.isfile(fpath) and
+            os.access(fpath, os.X_OK))
+
+
+def find_target_path(cwd):
+    """
+    Find binary directory,
+    assuming you're in the source path and have a symlinked binary.
+    """
+
+    # Prefer symlinks ending in '.bin',
+    # makes it clear whats intended and means we can be clear about our binary links.
+    # fallback to any executable symlink.
+    def test_fn_is_bin(fn):
+        return fn.endswith(".bin")
+
+    files = os.listdir(cwd)
+    files.sort()
+    for test_fn in (test_fn_is_bin, None):
+        for f in files:
+            if test_fn is None or test_fn(f):
+                fp = os.path.join(cwd, f)
+                if os.path.islink(fp):
+                    fp_target = os.readlink(fp)
+                    if is_exe(fp_target):
+                        # By convention cargo will use "{CARGO_TARGET_DIR}/{build_type}/{binary_name}"
+                        # so we need to go back some dirs
+                        fp_base = os.path.normpath(os.path.join(fp_target, ".."))
+                        if os.path.isdir(os.path.join(fp_base, ".fingerprint")):
+                            return os.path.normpath(os.path.join(fp_base, ".."))
+                        else:
+                            # This should never happen, not in common practice at least.
+                            # If its annoying we could quiet or move under some --verbose flag.
+                            print("Warning: %r doesn't end with 'target', skipping!" % fp_base)
+    return None
+
+
+def calc_target_path(cargo_path, source_path):
+    """
+    If we're in:
+       /src/my_project/Cargo.toml
+    Build in:
+       /src/my_project-target
+
+    And if we're in a source-repo of `/src/my_project` but have a crate in a subdir:
+       /src/my_project/some_nested_crate/Cargo.toml
+    Build in:
+       /src/my_project-some_nested_crate-target
+    """
+
+    # 'cargo_path' is where Cargo.toml is located.
+    subdir = os.path.relpath(cargo_path, source_path).strip(os.sep)
+    if ".." in subdir.split(os.sep):
+        print("Warning: %r is not a sub directory of %r" % (source_path, cargo_path))
+        return None
+
+    if subdir == ".":
+        # Crate is in the root, nothing fancy needed.
+        subdir = ""
+    else:
+        # Add a separator to avoid confusion.
+        subdir = "-" + subdir
+
+    return source_path.rstrip(os.sep) + subdir + "-target"
+
+
+def find_root(cwd, search_dirs=None, search_files=None):
+
+    def parent_or(path_old, default=None):
+        path_new = os.path.normpath(os.path.join(path_old, ".."))
+        if path_new != path_old:
+            return path_new
+        else:
+            return default
+
+    def is_root(path):
+        if search_dirs is not None:
+            for s in search_dirs:
+                if os.path.isdir(os.path.join(path, s)):
+                    return True
+        if search_files is not None:
+            for s in search_files:
+                if os.path.isfile(os.path.join(path, s)):
+                    return True
+        return False
+
+    path = cwd
+    while path is not None:
+        if is_root(path):
+            return path
+        path = parent_or(path, None)
+    return None
+
+
+def find_project_root(cwd, search=None):
+    return find_root(
+        cwd=cwd,
+        search_dirs=(
+            ".git",
+            ".svn",
+            ".hg",
+        ),
+        search_files=None,
+    )
+
+
+def find_cargo_root(cwd, search=None):
+    return find_root(
+        cwd=cwd,
+        search_dirs=None,
+        search_files=(
+            "Cargo.toml",
+        ),
+    )
+
+
+def main():
+
+    cargo_path = find_cargo_root(os.getcwd())
+
+    if cargo_path is None:
+        print("Couldn't find 'Cargo.toml' in %r" % os.getcwd())
+        return
+
+    source_path = find_project_root(cargo_path)
+    if source_path is None:
+        print("Couldn't find source path in %r" % cargo_path)
+        return
+
+    target_path = find_target_path(cargo_path)
+    if target_path is not None:
+        if VERBOSE:
+            print("Using target-path found from symlink: %r" % target_path)
+    else:
+        # print("Couldn't find target path in %r" % cargo_path)
+        # return
+        target_path = calc_target_path(cargo_path, source_path)
+        if target_path is not None:
+            if VERBOSE:
+                print("Using target-path: %r" % target_path)
+        else:
+            print("Error: unable to find a target path, exiting!")
+            return
+
+    # create build directory name!
+    if VERBOSE:
+        print("Source path:", source_path)
+        print("Target path:", target_path)
+
+    if not os.path.exists(target_path):
+        # To avoid noise, only print when creating  for the first time!
+        print("Running cargo with target:", target_path)
+
+    if RELOCATE_FILES:
+        files = [
+            (
+                # keep the lock in the build dir
+                os.path.join(target_path, "Cargo.lock"),
+                # move into the cargo path while running cargo.
+                os.path.join(cargo_path, "Cargo.lock"),
+            ),
+        ]
+    else:
+        files = []
+
+    import subprocess
+
+    with FileTempRelocate(files):
+        return_code = subprocess.call(
+            (CARGO_BIN, *sys.argv[1:]),
+            env={
+                **os.environ,
+                "CARGO_TARGET_DIR": os.path.join(target_path),
+            },
+        )
+
+    sys.exit(return_code)
+
+
+if __name__ == "__main__":
+    main()
