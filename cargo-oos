@@ -217,6 +217,9 @@ def main():
 
     import subprocess
 
+    # Used when pressing Ctrl-C while cargo runs.
+    return_code = 0
+
     with FileTempRelocate(files):
         return_code = subprocess.call(
             (CARGO_BIN, *sys.argv[1:]),
