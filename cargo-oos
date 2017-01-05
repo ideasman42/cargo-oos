@@ -84,7 +84,7 @@ def find_target_path(cwd):
                         else:
                             # This should never happen, not in common practice at least.
                             # If its annoying we could quiet or move under some --verbose flag.
-                            print("Warning: %r doesn't end with 'target', skipping!" % fp_base)
+                            print(f"Warning: {fp_base!r} doesn't end with 'target', skipping!")
     return None
 
 
@@ -104,7 +104,7 @@ def calc_target_path(cargo_path, source_path):
     # 'cargo_path' is where Cargo.toml is located.
     subdir = os.path.relpath(cargo_path, source_path).strip(os.sep)
     if ".." in subdir.split(os.sep):
-        print("Warning: %r is not a sub directory of %r" % (source_path, cargo_path))
+        print(f"Warning: {source_path!r} is not a sub directory of {cargo_path!r}")
         return None
 
     if subdir == ".":
@@ -171,37 +171,37 @@ def main():
     cargo_path = find_cargo_root(os.getcwd())
 
     if cargo_path is None:
-        print("Couldn't find 'Cargo.toml' in %r" % os.getcwd())
+        print(f"Couldn't find 'Cargo.toml' in {os.getcwd()!r}")
         return
 
     source_path = find_project_root(cargo_path)
     if source_path is None:
-        print("Couldn't find source path in %r" % cargo_path)
+        print(f"Couldn't find source path in {cargo_path!r}")
         return
 
     target_path = find_target_path(cargo_path)
     if target_path is not None:
         if VERBOSE:
-            print("Using target-path found from symlink: %r" % target_path)
+            print(f"Using target-path found from symlink: {target_path!r}")
     else:
-        # print("Couldn't find target path in %r" % cargo_path)
+        # print(f"Couldn't find target path in {cargo_path!r}")
         # return
         target_path = calc_target_path(cargo_path, source_path)
         if target_path is not None:
             if VERBOSE:
-                print("Using target-path: %r" % target_path)
+                print(f"Using target-path: {target_path!r}")
         else:
             print("Error: unable to find a target path, exiting!")
             return
 
     # create build directory name!
     if VERBOSE:
-        print("Source path:", source_path)
-        print("Target path:", target_path)
+        print(f"Source path: {source_path!r}")
+        print(f"Target path: {target_path!r}")
 
     if not os.path.exists(target_path):
         # To avoid noise, only print when creating  for the first time!
-        print("Running cargo with target:", target_path)
+        print(f"Running cargo with target: {target_path!r}")
 
     if RELOCATE_FILES:
         files = [
