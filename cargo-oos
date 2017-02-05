@@ -9,6 +9,10 @@ import sys
 # Environment Vars
 
 CARGO_BIN = os.environ.get("CARGO_BIN", "cargo")
+# cheap workaround for calling ourselves
+if CARGO_BIN.endswith(os.path.basename(__file__)):
+    CARGO_BIN = "cargo"
+
 VERBOSE = int(os.environ.get("VERBOSE", False)) != 0
 
 # Optionally keep lock file in the build dir
