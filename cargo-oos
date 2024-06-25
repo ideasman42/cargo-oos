@@ -1,8 +1,17 @@
 #!/usr/bin/env python3
 # Apache License, Version 2.0
 
+import contextlib
 import os
+import subprocess
 import sys
+
+from typing import (
+    Any,
+    Optional,
+    Sequence,
+    Tuple,
+)
 
 
 # ----------------
@@ -23,8 +32,6 @@ RELOCATE_FILES = int(os.environ.get("RELOCATE_FILES", False)) != 0
 # -------------------------
 # Temporary File Relocation
 
-import contextlib
-
 
 class FileTempRelocate(contextlib.ContextDecorator):
     __slots__ = (
@@ -32,10 +39,10 @@ class FileTempRelocate(contextlib.ContextDecorator):
         "_file_map",
     )
 
-    def __init__(self, file_map):
+    def __init__(self, file_map: Sequence[Tuple[str, str]]) -> None:
         self._file_map = tuple(file_map)
 
-    def __enter__(self):
+    def __enter__(self) -> "FileTempRelocate":
         for src, dst in self._file_map:
             if os.path.exists(src):
                 dst_dir = os.path.dirname(dst)
@@ -44,7 +51,7 @@ class FileTempRelocate(contextlib.ContextDecorator):
                 os.rename(src, dst)
         return self
 
-    def __exit__(self, *exc):
+    def __exit__(self, _ty: Any, _value: Any, _traceback: Any) -> "FileTempRelocate":
         for src, dst in self._file_map:
             if os.path.exists(dst):
                 os.rename(dst, src)
@@ -54,12 +61,12 @@ class FileTempRelocate(contextlib.ContextDecorator):
 # ----------------
 # Helper Functions
 
-def is_exe(fpath):
+def is_exe(fpath: str) -> bool:
     return (os.path.isfile(fpath) and
             os.access(fpath, os.X_OK))
 
 
-def find_target_path(cwd):
+def find_target_path(cwd: str) -> Optional[str]:
     """
     Find binary directory,
     assuming you're in the source path and have a symlinked binary.
@@ -68,7 +75,7 @@ def find_target_path(cwd):
     # Prefer symlinks ending in '.bin',
     # makes it clear whats intended and means we can be clear about our binary links.
     # fallback to any executable symlink.
-    def test_fn_is_bin(fn):
+    def test_fn_is_bin(fn: str) -> bool:
         return fn.endswith(".bin")
 
     files = os.listdir(cwd)
@@ -80,19 +87,22 @@ def find_target_path(cwd):
                 if os.path.islink(fp):
                     fp_target = os.readlink(fp)
                     if is_exe(fp_target):
-                        # By convention cargo will use "{CARGO_TARGET_DIR}/{build_type}/{binary_name}"
-                        # so we need to go back some dirs
+                        # By convention cargo will use
+                        # `{CARGO_TARGET_DIR}/{build_type}/{binary_name}`
+                        # so we need to go back some directories.
                         fp_base = os.path.normpath(os.path.join(fp_target, ".."))
                         if os.path.isdir(os.path.join(fp_base, ".fingerprint")):
                             return os.path.normpath(os.path.join(fp_base, ".."))
-                        else:
-                            # This should never happen, not in common practice at least.
-                            # If its annoying we could quiet or move under some --verbose flag.
-                            print(f"Warning: {fp_base!r} doesn't end with 'target', skipping!")
+                        # This should never happen, not in common practice at least.
+                        # If its annoying we could quiet or move under some --verbose flag.
+                        print(f"Warning: {fp_base!r} doesn't end with 'target', skipping!")
     return None
 
 
-def calc_target_path(cargo_path, source_path):
+def calc_target_path(
+        cargo_path: str,
+        source_path: str,
+) -> Optional[str]:
     """
     If we're in:
        /src/my_project/Cargo.toml
@@ -121,16 +131,19 @@ def calc_target_path(cargo_path, source_path):
     return source_path.rstrip(os.sep) + subdir + "-target"
 
 
-def find_root(path, search_dirs=None, search_files=None):
+def find_root(
+        path: str,
+        search_dirs: Optional[Sequence[str]] = None,
+        search_files: Optional[Sequence[str]] = None,
+) -> Optional[str]:
 
-    def parent_or(path_old, default=None):
+    def parent_or(path_old: str, default: Optional[str] = None) -> Optional[str]:
         path_new = os.path.normpath(os.path.join(path_old, ".."))
         if path_new != path_old:
             return path_new
-        else:
-            return default
+        return default
 
-    def is_root(path):
+    def is_root(path: str) -> bool:
         if search_dirs is not None:
             for s in search_dirs:
                 if os.path.isdir(os.path.join(path, s)):
@@ -141,14 +154,16 @@ def find_root(path, search_dirs=None, search_files=None):
                     return True
         return False
 
-    while path is not None:
+    while True:
         if is_root(path):
             return path
-        path = parent_or(path, None)
+        if (path_test := parent_or(path, None)) is None:
+            break
+        path = path_test
     return None
 
 
-def find_project_root(path):
+def find_project_root(path: str) -> Optional[str]:
     return find_root(
         path,
         search_dirs=(
@@ -160,7 +175,7 @@ def find_project_root(path):
     )
 
 
-def find_cargo_root(path):
+def find_cargo_root(path: str) -> Optional[str]:
     return find_root(
         path,
         search_dirs=None,
@@ -170,7 +185,7 @@ def find_cargo_root(path):
     )
 
 
-def main():
+def main() -> None:
 
     cargo_path = find_cargo_root(os.getcwd())
 
@@ -218,8 +233,6 @@ def main():
         ]
     else:
         files = []
-
-    import subprocess
 
     # Used when pressing Ctrl-C while cargo runs.
     return_code = 0
